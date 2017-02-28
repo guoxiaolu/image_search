@@ -8,7 +8,8 @@ This project is modified from [image-match](https://github.com/ascribe/image-mat
 The VGG_16 model can be get from [this](http://files.heuritech.com/weights/vgg16_weights.h5).
 
 About backup: backup is experiment code for so-called Siamese network and triplet-loss function on VOC2012 dataset. The experiment result is worse than the basic feature extraction. If you're intersted in the so-called state-of-art algorithm, try it~ However, instance search that is image search + object detection (Fast rcnn/SSD) is another hot topic.
+
 Dependencies:
-  basic package: numpy, scipy, skimage
+  numpy, scipy, skimage
   keras/theano
   elasticsearch
