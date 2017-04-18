@@ -1,7 +1,7 @@
 from .signature_database_base import SignatureDatabaseBase
 from .signature_database_base import normalized_distance
-from datetime import datetime
 import numpy as np
+import os
 
 
 class SignatureES(SignatureDatabaseBase):
@@ -48,18 +48,12 @@ class SignatureES(SignatureDatabaseBase):
     def search_single_record(self, rec):
         path = rec.pop('path')
         signature = rec.pop('signature')
+        thumbnail_path = rec.pop('thumbnail')
         if 'metadata' in rec:
             rec.pop('metadata')
 
-        # build the 'should' list
-        should = [{'term': {word: rec[word]}} for word in rec]
         res = self.es.search(index=self.index,
                               doc_type=self.doc_type,
-                              body={'query': {
-                                       'bool': {'should': should}
-                                     },
-                                    '_source': {'excludes': ['simple_word_*']}
-                                   },
                               size=self.size,
                               timeout=self.timeout)['hits']['hits']
 
@@ -71,8 +65,10 @@ class SignatureES(SignatureDatabaseBase):
         dists = normalized_distance(sigs, np.array(signature))
 
         formatted_res = [{'id': x['_id'],
-                          'score': x['_score'],
-                          'metadata': x['_source'].get('metadata'),
+                          # 'score': x['_score'],
+                          'msg_id': x['_source'].get('msg_id'),
+                          'pic_id': x['_source'].get('pic_id'),
+                          'thumbnail': x['_source'].get('thumbnail'),
                           'path': x['_source'].get('url', x['_source'].get('path'))}
                          for x in res]
 
@@ -83,7 +79,6 @@ class SignatureES(SignatureDatabaseBase):
         return formatted_res
 
     def insert_single_record(self, rec, refresh_after=False):
-        rec['timestamp'] = datetime.now()
         self.es.index(index=self.index, doc_type=self.doc_type, body=rec, refresh=refresh_after)
 
     def delete_duplicates(self, path):
@@ -91,14 +86,22 @@ class SignatureES(SignatureDatabaseBase):
         Args:
             path (string): path value to compare to those in the elastic search
         """
-        matching_paths = [item['_id'] for item in
-                          self.es.search(body={'query':
-                                               {'match':
-                                                {'path': path}
-                                               }
-                                              },
-                                         index=self.index)['hits']['hits']
-                          if item['_source']['path'] == path]
+        result = self.es.search(body={'query':
+                                 {'match':
+                                      {'path': path}
+                                  }
+                             },
+                       index=self.index)['hits']['hits']
+
+        matching_paths = []
+        matching_thumbnail = []
+        for item in result:
+            if item['_source']['path'] == path:
+                matching_paths.append(item['_id'])
+                matching_thumbnail.append(item['_source']['thumbnail'])
+
         if len(matching_paths) > 0:
-            for id_tag in matching_paths[1:]:
+            for i, id_tag in enumerate(matching_paths[1:]):
                 self.es.delete(index=self.index, doc_type=self.doc_type, id=id_tag)
+                if os.path.isfile(matching_thumbnail[i]):
+                    os.remove(matching_thumbnail[i])

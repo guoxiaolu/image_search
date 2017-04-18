@@ -13,7 +13,7 @@ from skimage.io import imread
 
 
 es = Elasticsearch()
-ses = SignatureES(es, distance_cutoff=0.095)
+ses = SignatureES(es, index='images2', distance_cutoff=0.095, weight_path='/users/lavector/model/vgg16_weights.h5')
 
 """Add images to elastic search,"""
 # import os.path
@@ -21,17 +21,18 @@ ses = SignatureES(es, distance_cutoff=0.095)
 # from tqdm import tqdm
 # import re
 # R = re.compile('(\.jpg|\.jpeg|\.bmp|\.png)$')
-# add image to image set
-# img_path = '/users/lavector/testdata/test3'
+# # add image to image set
+# img_path = '/users/lavector/testdata/test_game'
 # all_files = glob.glob(os.path.join(img_path, '*.*'))
 # for fn in tqdm(all_files):
 #     if R.search(fn) != None:
 #         ses.add_image(fn)
 
-# ses.delete_duplicates('/users/lavector/testdata/test3/images18.jpg')
+# ses.add_image('https://ss0.baidu.com/6ONWsjip0QIZ8tyhnq/it/u=2619242940,2733301503&fm=58')
+# ses.delete_duplicates('/users/lavector/testdata/imgset/airplanes-image_0058.jpg')
 
 """Display search result"""
-search_path = 'https://ss0.bdstatic.com/70cFvHSh_Q1YnxGkpoWK1HF6hhy/it/u=61419631,1940012873&fm=21&gp=0.jpg'
+search_path = 'http://img1.gamersky.com/image2016/08/20160803_my_227_3/1.jpg'
 # search_path = '/users/lavector/testdata/testset/accordion-image_0005.jpg'
 
 result = ses.search_image(search_path)
@@ -43,8 +44,8 @@ plt.axis('off')
 for i, re in enumerate(result[:min(6, len(result))]):
     number = int('33%d'%((i+4)))
     plt_result = plt.subplot(number)
-    path = re['path']
-    print path, re['dist'][0]
+    path = re['thumbnail']
+    print path, re['dist']
     plt_result.imshow(imread(path))
     plt.axis('off')
 plt.show()

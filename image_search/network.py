@@ -96,11 +96,10 @@ def pop_layer(model):
         model.outputs = [model.layers[-1].output]
     model.built = False
 
-def predict_model(weight_path, img):
+def predict_model(model, img):
     """Model prediction output
 
     """
-    model = load_deep_model(weight_path)
     out = model.predict(img)
     out = out.flatten()
     return out

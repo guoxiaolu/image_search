@@ -1,6 +1,8 @@
 from image_search.image_signature import ImageSignature
 from operator import itemgetter
 import numpy as np
+from datetime import datetime
+import os.path
 
 
 class SignatureDatabaseBase(object):
@@ -73,13 +75,14 @@ class SignatureDatabaseBase(object):
         """
         raise NotImplementedError
 
-    def __init__(self, distance_cutoff=0.45,
+    def __init__(self, distance_cutoff=0.095, save_path='../thumbnail', imgserver_ip = '127.0.0.1', imgserver_port = 9202,
                  *signature_args, **signature_kwargs):
         """Set up storage scheme for images
 
         Args:
             distance_cutoff (Optional [float]): maximum image signature distance to
-                be considered a match (default 0.45)
+                be considered a match (default 0.095)
+            save_path (Optional): thumbnail save path
             *signature_args: Variable length argument list to pass to ImageSignature
             **signature_kwargs: Arbitrary keyword arguments to pass to ImageSignature
 
@@ -92,16 +95,20 @@ class SignatureDatabaseBase(object):
             raise ValueError('distance_cutoff should be > 0 (got %r)' % distance_cutoff)
 
         self.distance_cutoff = distance_cutoff
-
+        self.save_path = save_path
 
         self.gis = ImageSignature(*signature_args, **signature_kwargs)
+        self.imgserver_port = imgserver_port
+        self.imgserver_ip = imgserver_ip
 
-    def add_image(self, path, img=None, bytestream=False, metadata=None, refresh_after=False):
+    def add_image(self, path, msg_id, pic_id, img=None, bytestream=False, metadata=None, refresh_after=False):
         """Add a single image to the database
 
         Args:
             path (string): path or identifier for image. If img=None, then path is assumed to be
                 a URL or filesystem path
+            msg_id (string): message id
+            pic_id (string): picture id
             img (Optional[string]): usually raw image data. In this case, path will still be stored, but
                 a signature will be generated from data in img. If bytestream is False, but img is
                 not None, then img is assumed to be the URL or filesystem path. Thus, you can store
@@ -114,7 +121,7 @@ class SignatureDatabaseBase(object):
             metadata (Optional): any other information you want to include, can be nested (default None)
 
         """
-        rec = make_record(path, self.gis, img=img, bytestream=bytestream, metadata=metadata)
+        rec = make_record(path, self.gis, self.imgserver_ip, self.imgserver_port, msg_id, pic_id, self.save_path, img=img, bytestream=bytestream, metadata=metadata)
         self.insert_single_record(rec, refresh_after=refresh_after)
 
     def search_image(self, path, bytestream=False):
@@ -148,7 +155,7 @@ class SignatureDatabaseBase(object):
         img = self.gis.preprocess_image(path, bytestream)
 
         # generate the signature
-        record = make_record(img, self.gis)
+        record = make_record(img, self.gis, self.imgserver_ip, self.imgserver_port)
 
         result = self.search_single_record(record)
 
@@ -157,14 +164,21 @@ class SignatureDatabaseBase(object):
 
         for item in result:
             if item['id'] not in ids:
-                unique.append(item)
+                u_item = {}
+                # u_item['thumbnail'] = item['thumbnail']
+                # u_item['thumbnail'] = 'http://%s:%s/%s' % (self.imgserver_ip, self.imgserver_port, item['thumbnail'])
+                u_item['msg_id'] = item['msg_id']
+                u_item['pic_id'] = item['pic_id']
+                u_item['path'] = item['path']
+                u_item['dist'] = item['dist'][0]
+                unique.append(u_item)
                 ids.add(item['id'])
 
         r = sorted(unique, key=itemgetter('dist'))
         return r
 
 
-def make_record(path, gis, img=None, bytestream=False, metadata=None):
+def make_record(path, gis, imgserver_ip, imgserver_port, msg_id=None, pic_id=None, save_path=None, img=None, bytestream=False, metadata=None):
     """Makes a record suitable for database insertion.
 
     Note:
@@ -175,6 +189,7 @@ def make_record(path, gis, img=None, bytestream=False, metadata=None):
     Args:
         path (string): path or image data. If bytestream=False, then path is assumed to be
             a URL or filesystem path. Otherwise, it's assumed to be raw image data
+        save_path: thumbnail save path
         gis (ImageSignature): an instance of ImageSignature for generating the
             signature
         img (Optional[string]): usually raw image data. In this case, path will still be stored, but
@@ -199,17 +214,45 @@ def make_record(path, gis, img=None, bytestream=False, metadata=None):
          }
 
     """
+
+    cur_time = datetime.now()
+    if save_path != None:
+        thumbnail_path = os.path.abspath(save_path)
+        try:
+            if not os.path.exists(thumbnail_path):
+                os.makedirs(thumbnail_path)
+        except OSError:
+            raise TypeError('Make thumbnail path error.')
+
+        thumbnail_name = cur_time.strftime("%Y_%m_%d_%H_%M_%S_%f") + '.jpg'
+        thumbnail_path = os.path.join(thumbnail_path, thumbnail_name)
+    else:
+        thumbnail_path = None
+
     record = dict()
     record['path'] = path
+    if msg_id is not None:
+        record['msg_id'] = msg_id
+    if pic_id is not None:
+        record['pic_id'] = pic_id
     if img is not None:
         signature = gis.generate_signature(img, bytestream=bytestream)
     else:
-        signature = gis.generate_signature(path)
+        signature = gis.generate_signature(path, thumbnail_path=thumbnail_path)
 
     record['signature'] = signature.tolist()
 
     if metadata:
         record['metadata'] = metadata
+
+
+    record['timestamp'] = cur_time
+
+    if thumbnail_path != None:
+        # record['thumbnail'] = 'http://%s:%s/%s'%(imgserver_ip, imgserver_port, thumbnail_name)
+        record['thumbnail'] = '%s' % (thumbnail_name)
+    else:
+        record['thumbnail'] = 'null'
 
     return record
 

@@ -1,4 +1,4 @@
-from skimage.io import imread
+from skimage.io import imread, imsave
 from skimage.color import gray2rgb
 from scipy.misc import imresize
 from PIL import Image
@@ -9,7 +9,7 @@ except ImportError:
 from io import BytesIO
 import numpy as np
 import xml.etree
-from network import predict_model
+from network import predict_model, load_deep_model
 
 
 class CorruptImageError(RuntimeError):
@@ -34,12 +34,14 @@ class ImageSignature(object):
 
         self.network = network
         self.weight_path = weight_path
+        self.model = load_deep_model(weight_path)
 
-    def generate_signature(self, path_or_image, bytestream=False):
+    def generate_signature(self, path_or_image, thumbnail_path=None, bytestream=False):
         """Generates an image signature.
 
         Args:
             path_or_image (string or numpy.ndarray): image path, or image array
+            thumbnail_path(Optional): thumbnail save path
             bytestream (Optional[boolean]): will the image be passed as raw bytes?
                 That is, is the 'path_or_image' argument an in-memory image?
                 (default False)
@@ -54,17 +56,17 @@ class ImageSignature(object):
             >>> gis.generate_signature('https://pixabay.com/static/uploads/photo/2012/11/28/08/56/mona-lisa-67506_960_720.jpg')
         """
         # Step 1:    Load image as array of grey-levels
-        im_array = self.preprocess_image(path_or_image, bytestream=bytestream)
+        im_array = self.preprocess_image(path_or_image, bytestream=bytestream, thumbnail_path=thumbnail_path)
 
         # Step 2:    Extract image feature
         try:
-            out = predict_model(self.weight_path, im_array)
+            out = predict_model(self.model, im_array)
         except IOError:
             raise TypeError('Cannot predict image successfully.')
         return out
 
     @staticmethod
-    def preprocess_image(image_or_path, bytestream=False):
+    def preprocess_image(image_or_path, bytestream=False, thumbnail_path=None):
         if bytestream:
             try:
                 img = Image.open(BytesIO(image_or_path))
@@ -83,6 +85,13 @@ class ImageSignature(object):
                 img = gray2rgb(img)
             img_size = (224, 224, 3)
             img = imresize(img, img_size)
+
+            # save this image to thumbnail_path
+            if thumbnail_path != None:
+                try:
+                    imsave(thumbnail_path, img)
+                except (RuntimeError, ValueError):
+                    raise TypeError('Cannot save image successfully.')
             img = img.astype('float32')
             # We normalize the colors (in RGB space) with the empirical means on the training set
             img[:, :, 0] -= 123.68
