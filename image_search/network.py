@@ -5,8 +5,11 @@ os.environ['KERAS_BACKEND']='theano'
 from keras.models import Sequential, Model
 from keras.layers import Flatten, Dense, Dropout, Activation
 from keras.layers.convolutional import Convolution2D, MaxPooling2D, ZeroPadding2D
+# from keras.applications import VGG16
 import keras.backend as K
 K.set_image_dim_ordering('th')
+import numpy as np
+from get_label import get_labels
 
 def VGG_16(weight_path=None):
     """VGG 16 model
@@ -70,36 +73,26 @@ def load_deep_model(weight_path=None):
     """
     base_model = VGG_16(weight_path)
 
-    pop_layer(base_model)
-
-    x = base_model.outputs
-    x = Activation(activation='sigmoid')(x)
-
-    model = Model(input=base_model.input, output=x)
+    model = Model(input=base_model.input, output=base_model.get_layer('dense_3').output)
 
     return model
 
-def pop_layer(model):
-    """pop one layer
+def sigmoid(z):
+    return 1.0 / (1.0 + np.exp(-1.0 * z))
 
-    """
-    if not model.outputs:
-        raise Exception('Sequential model cannot be popped: model is empty.')
+def softmax(x):
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=0)
 
-    model.layers.pop()
-    if not model.layers:
-        model.outputs = []
-        model.inbound_nodes = []
-        model.outbound_nodes = []
-    else:
-        model.layers[-1].outbound_nodes = []
-        model.outputs = [model.layers[-1].output]
-    model.built = False
-
-def predict_model(model, img):
+def predict_model(model, img, labels_id, labels_name):
     """Model prediction output
-
     """
+
     out = model.predict(img)
     out = out.flatten()
-    return out
+    label = softmax(out)
+    top_3 = np.argsort(label)[::-1][:3]
+    top_3_prob = label[top_3]
+    label_filter = get_labels(labels_id, labels_name, top_3, top_3_prob)
+    out = sigmoid(out)
+    return out, label_filter

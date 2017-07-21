@@ -1,15 +1,14 @@
 from .signature_database_base import SignatureDatabaseBase
-from .signature_database_base import normalized_distance
-import numpy as np
 import os
-
+from get_label import LABEL_OTHER
+from datetime import datetime, timedelta
 
 class SignatureES(SignatureDatabaseBase):
     """Elasticsearch driver for image-match
 
     """
 
-    def __init__(self, es, index='images', doc_type='image', timeout='10s', size=100,
+    def __init__(self, es, index='images', doc_type='image', timeout='10s', size=20,
                  *args, **kwargs):
         """Extra setup for Elasticsearch
 
@@ -45,38 +44,111 @@ class SignatureES(SignatureDatabaseBase):
 
         super(SignatureES, self).__init__(*args, **kwargs)
 
-    def search_single_record(self, rec):
-        path = rec.pop('path')
+    def search_single_record(self, rec, term_after):
         signature = rec.pop('signature')
-        thumbnail_path = rec.pop('thumbnail')
+        top_1 = rec.pop('top_1')
+        # top_2 = rec.pop('top_2')
+        # top_3 = rec.pop('top_3')
+
         if 'metadata' in rec:
             rec.pop('metadata')
+        # a common query DSL
+        body={"terminate_after":term_after,
+        "query": {
+        "function_score": {
+             "query" : {
+                "bool" : {
+                  "must" : []
+               }
+           },
+            "script_score": {
+                "script": {
+                    "inline": "payload_vector_score",
+                    "lang": "native",
+                    "params": {
+                        "field": "signature",
+                        "vector": signature,
+                        "cosine": True
+                    }
+                }
+            },
+            "min_score" : self.distance_cutoff,
+            "boost_mode":"replace"
+        }
+        }
+        }
+        # label is useful or 'other(10000)'
+        # if 'other', just search 'other', then return directly
+        # else, first search top_1(search) or top_2(search) or top_3(search) == top_1 or top_2 or top_3
+        # then search 'other' if search result number is not enough
 
-        res = self.es.search(index=self.index,
-                              doc_type=self.doc_type,
-                              size=self.size,
-                              timeout=self.timeout)['hits']['hits']
-
-        sigs = np.array([x['_source']['signature'] for x in res])
-
-        if sigs.size == 0:
-            return []
-
-        dists = normalized_distance(sigs, np.array(signature))
-
-        formatted_res = [{'id': x['_id'],
-                          # 'score': x['_score'],
-                          'msg_id': x['_source'].get('msg_id'),
-                          'pic_id': x['_source'].get('pic_id'),
-                          'thumbnail': x['_source'].get('thumbnail'),
-                          'path': x['_source'].get('url', x['_source'].get('path'))}
-                         for x in res]
-
-        for i, row in enumerate(formatted_res):
-            row['dist'] = dists[i]
-        formatted_res = filter(lambda y: y['dist'] < self.distance_cutoff, formatted_res)
-
-        return formatted_res
+        if top_1 == LABEL_OTHER:
+            now = datetime.now()
+            delta = timedelta(days=30)
+            body["query"]["function_score"]["query"]["bool"]["must"] = [{"multi_match": {
+                            "query": top_1,
+                            "fields": ["top_1"]
+                        }},
+                        {"range": {
+                            "timestamp": {
+                                "gt": now-delta,
+                                "lt": now
+                            }
+                        }}]
+            es_res = self.es.search(index=self.index,
+                                 doc_type=self.doc_type,
+                                 size=term_after*5,
+                                 body=body,
+                                 _source_exclude=['signature', 'timestamp', 'top_1', 'top_2', 'top_3'],
+                                 timeout=self.timeout)['hits']
+            res = es_res['hits']
+        else:
+            # body["query"]["function_score"]["query"]["bool"]["should"] = [{"multi_match": {
+            #                 "query": top_1,
+            #                 "fields": ["top_1", "top_2", "top_3"]
+            #             }},
+            #             {"multi_match": {
+            #                 "query": top_2,
+            #                 "fields": ["top_1", "top_2", "top_3"]
+            #             }},
+            #             {"multi_match": {
+            #                 "query": top_3,
+            #                 "fields": ["top_1", "top_2", "top_3"]
+            #             }}]
+            now = datetime.now()
+            delta = timedelta(days=30)
+            body["query"]["function_score"]["query"]["bool"]["must"] = [{"multi_match": {
+                "query": top_1,
+                "fields": ["top_1", "top_2", "top_3"]
+                }},
+                {"range": {
+                    "timestamp": {
+                        "gt": now-delta,
+                        "lt": now
+                    }
+                }}]
+            es_res = self.es.search(index=self.index,
+                                 doc_type=self.doc_type,
+                                 size=term_after*5,
+                                 body=body,
+                                 _source_exclude=['signature', 'timestamp', 'top_1', 'top_2', 'top_3'],
+                                 timeout=self.timeout)
+            res = es_res['hits']['hits']
+            # total = es_res['total']
+            # if total < term_after:
+            #     body["query"]["function_score"]["query"]["bool"]["should"] = [{"multi_match": {
+            #         "query": LABEL_OTHER,
+            #         "fields": ["top_1"]
+            #     }}]
+            #     body["terminate_after"] = term_after - total
+            #     es_res = self.es.search(index=self.index,
+            #                             doc_type=self.doc_type,
+            #                             size=term_after - total,
+            #                             body=body,
+            #                             _source_exclude=['signature', 'timestamp', 'thumbnail', 'top_1', 'top_2', 'top_3'],
+            #                             timeout=self.timeout)['hits']['hits']
+            #     res += es_res
+        return res
 
     def insert_single_record(self, rec, refresh_after=False):
         self.es.index(index=self.index, doc_type=self.doc_type, body=rec, refresh=refresh_after)

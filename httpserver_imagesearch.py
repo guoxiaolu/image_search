@@ -11,22 +11,56 @@ hostname = socket.gethostname()
 
 app = Flask(__name__)
 
-port = '9201'
-imgserver_ip = hostname
-imgserver_port = '9202'
+port = '3005'
+es_index = "image_search0"
+# weight_path='/share/image_search_model/vgg16_weights.h5'
+weight_path='/Users/Lavector/model/vgg16_weights.h5'
 
-thumbnail_path = '../thumbnail'
+# es = Elasticsearch("es1")
+es = Elasticsearch("0.0.0.0", port=9210, timeout=15)
 
-es = Elasticsearch("es1")
-ses = SignatureES(es, index='image_search', weight_path='/share/image_search_model/vgg16_weights.h5', save_path=thumbnail_path, imgserver_ip = imgserver_ip, imgserver_port = imgserver_port)
+if not es.indices.exists(es_index):
+	# index settings
+	settings = {
+		"settings" : {
+			"analysis": {
+					"analyzer": {
+					   "payload_analyzer": {
+						  "type": "custom",
+						  "tokenizer":"whitespace",
+						  "filter":"delimited_payload_filter"
+						}
+			  }
+			}
+		 },
+		 "mappings": {
+			"image" : {
+			  "properties" : {
+				  "signature": {
+							  "type": "text",
+							  "term_vector": "with_positions_offsets_payloads",
+							  "analyzer" : "payload_analyzer"
+						   }
+			  }
+		  }
+		 }
+	}
+	try:
+		# create index
+		es.indices.create(index=es_index, body=settings)
+	except Exception, e:
+		pass
 
-# es = Elasticsearch("0.0.0.0")
-# ses = SignatureES(es, index='image_search', weight_path='/Users/Lavector/model/vgg16_weights.h5', save_path=thumbnail_path, imgserver_ip = imgserver_ip, imgserver_port = imgserver_port)
+ses = SignatureES(es, index=es_index, weight_path=weight_path)
 
 @app.route('/search',methods=['GET', 'POST'])
-def message_for_image_search():
+@app.route('/search/<int:term_after>',methods=['GET', 'POST'])
+def message_for_image_search(term_after=5):
 	if request.method == 'GET':
 		return '200'
+	print term_after
+	if term_after <=0 or term_after > 100:
+		return '201'
 	search_dict = {}
 	search_dict["tag"] = {}
 	search_dict["result"] = "ok"
@@ -50,7 +84,7 @@ def message_for_image_search():
 				print url
 
 				try:
-					result = ses.search_image(str(url))
+					result = ses.search_image(str(url), term_after)
 					message_search[pic_id] = result
 				except Exception, e:
 					message_search[pic_id] = []
@@ -100,4 +134,4 @@ def message_for_image_add():
 	return tag_json
 
 if __name__ == '__main__':
-	app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
+	app.run(debug=False, host='0.0.0.0', port=port)

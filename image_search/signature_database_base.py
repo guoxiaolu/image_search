@@ -1,8 +1,7 @@
 from image_search.image_signature import ImageSignature
-from operator import itemgetter
 import numpy as np
 from datetime import datetime
-import os.path
+import time
 
 
 class SignatureDatabaseBase(object):
@@ -14,7 +13,7 @@ class SignatureDatabaseBase(object):
 
     """
 
-    def search_single_record(self, rec):
+    def search_single_record(self, rec, term_after):
         """Search for a matching image record.
 
         Must be implemented by derived class.
@@ -75,7 +74,7 @@ class SignatureDatabaseBase(object):
         """
         raise NotImplementedError
 
-    def __init__(self, distance_cutoff=0.095, save_path='../thumbnail', imgserver_ip = '127.0.0.1', imgserver_port = 9202,
+    def __init__(self, distance_cutoff=0.905,
                  *signature_args, **signature_kwargs):
         """Set up storage scheme for images
 
@@ -95,13 +94,10 @@ class SignatureDatabaseBase(object):
             raise ValueError('distance_cutoff should be > 0 (got %r)' % distance_cutoff)
 
         self.distance_cutoff = distance_cutoff
-        self.save_path = save_path
 
         self.gis = ImageSignature(*signature_args, **signature_kwargs)
-        self.imgserver_port = imgserver_port
-        self.imgserver_ip = imgserver_ip
 
-    def add_image(self, path, msg_id, pic_id, img=None, bytestream=False, metadata=None, refresh_after=False):
+    def add_image(self, path, msg_id, pic_id, bytestream=False, metadata=None, refresh_after=False):
         """Add a single image to the database
 
         Args:
@@ -121,10 +117,10 @@ class SignatureDatabaseBase(object):
             metadata (Optional): any other information you want to include, can be nested (default None)
 
         """
-        rec = make_record(path, self.gis, self.imgserver_ip, self.imgserver_port, msg_id, pic_id, self.save_path, img=img, bytestream=bytestream, metadata=metadata)
+        rec = make_record(path, self.gis, msg_id, pic_id, bytestream=bytestream, metadata=metadata)
         self.insert_single_record(rec, refresh_after=refresh_after)
 
-    def search_image(self, path, bytestream=False):
+    def search_image(self, path, term_after, bytestream=False):
         """Search for matches
 
         Args:
@@ -152,33 +148,21 @@ class SignatureDatabaseBase(object):
             ]
 
         """
+        start = time.time()
         img = self.gis.preprocess_image(path, bytestream)
-
+        url = time.time()
         # generate the signature
-        record = make_record(img, self.gis, self.imgserver_ip, self.imgserver_port)
-
-        result = self.search_single_record(record)
-
-        ids = set()
-        unique = []
-
-        for item in result:
-            if item['id'] not in ids:
-                u_item = {}
-                # u_item['thumbnail'] = item['thumbnail']
-                # u_item['thumbnail'] = 'http://%s:%s/%s' % (self.imgserver_ip, self.imgserver_port, item['thumbnail'])
-                u_item['msg_id'] = item['msg_id']
-                u_item['pic_id'] = item['pic_id']
-                u_item['path'] = item['path']
-                u_item['dist'] = item['dist'][0]
-                unique.append(u_item)
-                ids.add(item['id'])
-
-        r = sorted(unique, key=itemgetter('dist'))
-        return r
+        record = make_record(img, self.gis)
+        print record['top_1']
+        signature = time.time()
+        print 'url:%f,signature:%f' % (url - start, signature - url)
+        result = self.search_single_record(record, term_after)
+        search = time.time()
+        print 'search:%f'%(search-signature)
+        return result
 
 
-def make_record(path, gis, imgserver_ip, imgserver_port, msg_id=None, pic_id=None, save_path=None, img=None, bytestream=False, metadata=None):
+def make_record(path, gis, msg_id=None, pic_id=None,bytestream=False, metadata=None):
     """Makes a record suitable for database insertion.
 
     Note:
@@ -216,18 +200,6 @@ def make_record(path, gis, imgserver_ip, imgserver_port, msg_id=None, pic_id=Non
     """
 
     cur_time = datetime.now()
-    if save_path != None:
-        thumbnail_path = os.path.abspath(save_path)
-        try:
-            if not os.path.exists(thumbnail_path):
-                os.makedirs(thumbnail_path)
-        except OSError:
-            raise TypeError('Make thumbnail path error.')
-
-        thumbnail_name = cur_time.strftime("%Y_%m_%d_%H_%M_%S_%f") + '.jpg'
-        thumbnail_path = os.path.join(thumbnail_path, thumbnail_name)
-    else:
-        thumbnail_path = None
 
     record = dict()
     record['path'] = path
@@ -235,24 +207,28 @@ def make_record(path, gis, imgserver_ip, imgserver_port, msg_id=None, pic_id=Non
         record['msg_id'] = msg_id
     if pic_id is not None:
         record['pic_id'] = pic_id
-    if img is not None:
-        signature = gis.generate_signature(img, bytestream=bytestream)
-    else:
-        signature = gis.generate_signature(path, thumbnail_path=thumbnail_path)
 
-    record['signature'] = signature.tolist()
+    signature, labels = gis.generate_signature(path, bytestream=bytestream)
+    sig_list = signature.tolist()
+    if isinstance(path, str):
+        sig_res = ''
+        for i, val in enumerate(sig_list):
+            if i != (len(sig_list) - 1):
+                sig_res += '%d|%f ' % (i, val)
+            else:
+                sig_res += '%d|%f' % (i, val)
+        record['signature'] = sig_res
+    else:
+        record['signature'] = sig_list
+
+    record['top_1'] = labels[0]
+    record['top_2'] = labels[1]
+    record['top_3'] = labels[2]
 
     if metadata:
         record['metadata'] = metadata
 
-
     record['timestamp'] = cur_time
-
-    if thumbnail_path != None:
-        # record['thumbnail'] = 'http://%s:%s/%s'%(imgserver_ip, imgserver_port, thumbnail_name)
-        record['thumbnail'] = '%s' % (thumbnail_name)
-    else:
-        record['thumbnail'] = 'null'
 
     return record
 

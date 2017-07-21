@@ -10,6 +10,8 @@ from io import BytesIO
 import numpy as np
 import xml.etree
 from network import predict_model, load_deep_model
+from get_label import read_labels
+from imread import file_or_url_context
 
 
 class CorruptImageError(RuntimeError):
@@ -35,8 +37,9 @@ class ImageSignature(object):
         self.network = network
         self.weight_path = weight_path
         self.model = load_deep_model(weight_path)
+        self.labels_id, self.labels_name = read_labels()
 
-    def generate_signature(self, path_or_image, thumbnail_path=None, bytestream=False):
+    def generate_signature(self, path_or_image, bytestream=False):
         """Generates an image signature.
 
         Args:
@@ -56,17 +59,17 @@ class ImageSignature(object):
             >>> gis.generate_signature('https://pixabay.com/static/uploads/photo/2012/11/28/08/56/mona-lisa-67506_960_720.jpg')
         """
         # Step 1:    Load image as array of grey-levels
-        im_array = self.preprocess_image(path_or_image, bytestream=bytestream, thumbnail_path=thumbnail_path)
+        im_array = self.preprocess_image(path_or_image, bytestream=bytestream)
 
         # Step 2:    Extract image feature
         try:
-            out = predict_model(self.model, im_array)
+            out, labels = predict_model(self.model, im_array, self.labels_id, self.labels_name)
         except IOError:
             raise TypeError('Cannot predict image successfully.')
-        return out
+        return out, labels
 
     @staticmethod
-    def preprocess_image(image_or_path, bytestream=False, thumbnail_path=None):
+    def preprocess_image(image_or_path, bytestream=False):
         if bytestream:
             try:
                 img = Image.open(BytesIO(image_or_path))
@@ -78,20 +81,18 @@ class ImageSignature(object):
                     raise CorruptImageError()
         elif type(image_or_path) is str:
             try:
-                img = imread(image_or_path)
+                # img = imread(image_or_path)
+                with file_or_url_context(image_or_path) as img_name:
+                    img = imread(img_name)
             except IOError:
                 raise TypeError('Cannot read image successfully.')
             if len(img.shape) == 2:
                 img = gray2rgb(img)
+            elif img.shape[-1] == 4:
+                img = img[:,:,:3]
             img_size = (224, 224, 3)
             img = imresize(img, img_size)
 
-            # save this image to thumbnail_path
-            if thumbnail_path != None:
-                try:
-                    imsave(thumbnail_path, img)
-                except (RuntimeError, ValueError):
-                    raise TypeError('Cannot save image successfully.')
             img = img.astype('float32')
             # We normalize the colors (in RGB space) with the empirical means on the training set
             img[:, :, 0] -= 123.68
