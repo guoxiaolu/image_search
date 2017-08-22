@@ -6,6 +6,7 @@ Search Engine: Elastic search
 
 This project is modified from [image-match](https://github.com/ascribe/image-match).
 The VGG_16 model can be get from [this](http://files.heuritech.com/weights/vgg16_weights.h5).
+A plugin is needed for ElasticSearch vector scoring, from [here](https://github.com/MLnick/elasticsearch-vector-scoring)
 
 Dependence:
   basic package: numpy, scipy, skimage
